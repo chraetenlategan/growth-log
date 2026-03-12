@@ -160,7 +160,7 @@ textarea::placeholder{color:#B5A898;font-style:italic;}
       <p>LEARN · PRACTICE · CREATE</p>
     </div>
     <nav class="nav" id="nav"></nav>
-    <div class="sidebar-foot">
+    <div class="sidebar-foot"><div id="sync-status" style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.04em;min-height:14px;margin-bottom:6px;"></div>
       <p id="sidebar-stats"></p>
       <button class="backupbtn" onclick="manualBackup()">⬇ Backup now</button>
       <button class="backupbtn" onclick="importBackup()">⬆ Restore backup</button>
@@ -219,55 +219,104 @@ let currentView = "journal";
 let calYear, calMonth, formMood = 2, formHobbies = [], formHobbyNotes = {};
 let formLearnTags=[], formPracTags=[], formCreaTags=[];
 
-// ── STORAGE ───────────────────────────────────────────────────────────────────
+// ── CLOUD CONFIG ──────────────────────────────────────────────────────────────
+const API_KEY = "$2a$10$rLQ.dL3mnb.z/CrZnWbhvuZ9LuFe8nsJCZDVXLFd8qozPU1AUGGL.";
+const BIN_ID  = "69b30513b7ec241ddc62c5e2";
+const BIN_URL = "https://api.jsonbin.io/v3/b/" + BIN_ID;
+const HDRS    = { "Content-Type":"application/json", "X-Master-Key": API_KEY };
+
+let cloudStatus = "idle";
+
+function showSyncStatus(s) {
+  cloudStatus = s;
+  const el = document.getElementById("sync-status");
+  if(!el) return;
+  const map = { idle:"", syncing:"☁ Syncing…", ok:"✓ Saved to cloud", error:"⚠ Offline – saved locally" };
+  el.textContent = map[s]||"";
+  el.style.color = s==="error" ? "#AA7A4A" : s==="ok" ? "#4A8A4A" : "#8A7A66";
+}
+
+function localSave() {
+  try { localStorage.setItem("gl-entries", JSON.stringify(entries)); } catch(e){}
+  try { localStorage.setItem("gl-purity", JSON.stringify(purity)); } catch(e){}
+}
+
+async function pushToCloud() {
+  showSyncStatus("syncing");
+  localSave();
+  try {
+    const r = await fetch(BIN_URL, { method:"PUT", headers: HDRS,
+      body: JSON.stringify({version:1, entries, purity}) });
+    if(!r.ok) throw new Error(r.status);
+    showSyncStatus("ok");
+    setTimeout(()=>showSyncStatus("idle"), 3000);
+  } catch(e) { showSyncStatus("error"); }
+}
+
+async function pullFromCloud() {
+  showSyncStatus("syncing");
+  try {
+    const r = await fetch(BIN_URL + "/latest", { headers: { "X-Master-Key": API_KEY } });
+    if(!r.ok) throw new Error(r.status);
+    const json = await r.json();
+    const rec = json.record;
+    if(rec) {
+      if(Array.isArray(rec.entries)) entries = rec.entries;
+      if(rec.purity && typeof rec.purity==="object") purity = rec.purity;
+      localSave();
+    }
+    showSyncStatus("ok");
+    setTimeout(()=>showSyncStatus("idle"), 2000);
+  } catch(e) {
+    // fall back to localStorage
+    try { const e2 = localStorage.getItem("gl-entries"); if(e2) entries = JSON.parse(e2); } catch(x){}
+    try { const p2 = localStorage.getItem("gl-purity"); if(p2) purity = JSON.parse(p2); } catch(x){}
+    showSyncStatus("error");
+    setTimeout(()=>showSyncStatus("idle"), 3000);
+  }
+}
+
+// ── STORAGE FUNCTIONS ─────────────────────────────────────────────────────────
 function load() {
+  // Load from localStorage immediately, then sync from cloud
   try { const e = localStorage.getItem("gl-entries"); if(e) entries = JSON.parse(e); } catch(x){}
   try { const p = localStorage.getItem("gl-purity"); if(p) purity = JSON.parse(p); } catch(x){}
 }
-function saveEntries(doBackup=true) {
-  try { localStorage.setItem("gl-entries", JSON.stringify(entries)); } catch(x){}
-  if(doBackup) autoBackup();
+
+function saveEntries(doSync=true) {
+  localSave();
+  if(doSync) pushToCloud().then(()=>renderSidebarStats());
 }
 function savePurity() {
-  try { localStorage.setItem("gl-purity", JSON.stringify(purity)); } catch(x){}
-  autoBackup();
+  localSave();
+  pushToCloud().then(()=>renderSidebarStats());
 }
-function autoBackup() {
+
+function manualBackup() {
   try {
     const data = {version:1, exportedAt:new Date().toISOString(), entries, purity};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "growth-log-backup-" + new Date().toISOString().slice(0,10) + ".json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const a = document.createElement("a"); a.href=url;
+    a.download = "growth-log-backup-"+new Date().toISOString().slice(0,10)+".json";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch(e){}
 }
-function manualBackup() { autoBackup(); }
+
 function importBackup() {
   const inp = document.createElement("input");
-  inp.type = "file"; inp.accept = ".json";
+  inp.type="file"; inp.accept=".json";
   inp.onchange = function(ev) {
-    const file = ev.target.files[0];
-    if(!file) return;
+    const file = ev.target.files[0]; if(!file) return;
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
         const data = JSON.parse(e.target.result);
-        if(data.entries && Array.isArray(data.entries)) {
-          entries = data.entries;
-          localStorage.setItem("gl-entries", JSON.stringify(entries));
-        }
-        if(data.purity && typeof data.purity==="object") {
-          purity = data.purity;
-          localStorage.setItem("gl-purity", JSON.stringify(purity));
-        }
-        alert("Restored " + (entries.length) + " entries successfully!");
-        renderAll();
-      } catch(err) { alert("Could not read that file. Make sure it's a Growth Log backup."); }
+        if(data.entries && Array.isArray(data.entries)) entries = data.entries;
+        if(data.purity && typeof data.purity==="object") purity = data.purity;
+        pushToCloud().then(()=>{ renderAll(); alert("Restored "+entries.length+" entries and pushed to cloud!"); });
+      } catch(err) { alert("Could not read that file."); }
     };
     reader.readAsText(file);
   };
@@ -669,8 +718,10 @@ function renderAll() {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
-load();
+load(); // load localStorage immediately so UI renders fast
 switchView("journal");
+// Then pull latest from cloud in background
+pullFromCloud().then(()=>renderAll());
 </script>
 </body>
 </html>

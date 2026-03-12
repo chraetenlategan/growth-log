@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Growth Log</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>* { box-sizing: border-box; } body { margin: 0; background: #F5EFE6; }</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+
+const STORAGE_KEY = "growth-log-entries";
+const PURITY_KEY  = "growth-log-purity";
+
+const MOOD_OPTIONS = ["😴","😐","🙂","😊","🔥"];
+const MOOD_LABELS  = ["Drained","Meh","Okay","Good","On fire"];
+
+const CATEGORIES = ["Music","Tech","Physical","Creative","Social","Reading","Other"];
+const CAT_COLOR  = {
+  Music:"#D4956A",Tech:"#6A9BD4",Physical:"#6AD48A",
+  Creative:"#D46AB5",Social:"#D4C46A",Reading:"#9B6AD4",Other:"#A0A0A0"
+};
+
+const HOBBIES = [
+  {id:"running",    label:"Running",       icon:"🏃"},
+  {id:"fishing",    label:"Fishing",       icon:"🎣"},
+  {id:"squash",     label:"Squash",        icon:"🎾"},
+  {id:"skate",      label:"Skateboarding", icon:"🛹"},
+  {id:"rl",         label:"Rocket League", icon:"🚀"},
+  {id:"chess",      label:"Chess",         icon:"♟️"},
+  {id:"crossfit",   label:"CrossFit",      icon:"🏋️"},
+  {id:"bible",      label:"Bible",         icon:"📖"},
+  {id:"guitar",     label:"Guitar",        icon:"🎸"},
+];
+
+// Safe storage helpers
+async function storageGet(key) {
+  try {
+    if (window.storage) {
+      const r = await window.storage.get(key);
+      return r?.value ? JSON.parse(r.value) : null;
+    }
+  } catch(e) {}
+  try {
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : null;
+  } catch(e) {}
+  return null;
+}
+
+async function storageSet(key, val) {
+  try {
+    if (window.storage) {
+      await window.storage.set(key, JSON.stringify(val));
+      return;
+    }
+  } catch(e) {}
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0,10);
+}
+
+function fmtDate(d) {
+  try {
+    return new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  } catch(e) { return d; }
+}
+
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+
+const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&family=Lora:ital,wght@0,400;0,500;1,400&family=DM+Mono:wght@400;500&display=swap');`;
+
+const CSS = `
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:#F5EFE6;min-height:100%;}
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-thumb{background:#C9B99A;border-radius:3px;}
+
+.gl-app{
+  display:flex;min-height:100vh;background:#F5EFE6;
+  font-family:'Lora',Georgia,serif;color:#2C2416;
+}
+
+/* SIDEBAR */
+.gl-sidebar{
+  position:fixed;left:0;top:0;bottom:0;width:220px;
+  background:#EDE4D5;border-right:1px solid #D4C9B5;
+  display:flex;flex-direction:column;padding:28px 0;z-index:10;overflow-y:auto;
+  flex-shrink:0;
+}
+.gl-logo{padding:0 22px 24px;border-bottom:1px solid #D4C9B5;}
+.gl-logo h1{font-family:'Playfair Display',serif;font-size:20px;font-weight:600;line-height:1.3;}
+.gl-logo p{font-family:'DM Mono',monospace;font-size:10px;color:#8A7A66;margin-top:4px;letter-spacing:.06em;}
+.gl-nav{padding:14px 10px;display:flex;flex-direction:column;gap:2px;}
+.gl-navbtn{
+  display:flex;align-items:center;gap:9px;padding:9px 11px;
+  border:none;background:none;cursor:pointer;border-radius:7px;
+  font-family:'Lora',serif;font-size:13px;color:#6B5B47;
+  transition:all .15s;text-align:left;width:100%;
+}
+.gl-navbtn:hover{background:#E0D6C8;color:#2C2416;}
+.gl-navbtn.on{background:#2C2416;color:#F5EFE6;}
+.gl-navbtn .ni{font-size:15px;}
+.gl-sidebar-foot{margin-top:auto;padding:18px 22px;border-top:1px solid #D4C9B5;}
+.gl-sidebar-foot p{font-family:'DM Mono',monospace;font-size:11px;color:#8A7A66;line-height:1.9;}
+.gl-sidebar-foot strong{color:#2C2416;font-weight:500;}
+
+/* MAIN */
+.gl-main{margin-left:220px;flex:1;padding:36px 44px;min-height:100vh;}
+.gl-phdr{margin-bottom:28px;}
+.gl-phdr h2{font-family:'Playfair Display',serif;font-size:28px;font-weight:400;}
+.gl-phdr p{color:#8A7A66;font-size:13px;margin-top:4px;font-style:italic;}
+
+/* CARD BASE */
+.gl-card{background:#FDFAF6;border:1px solid #D4C9B5;border-radius:14px;padding:28px;box-shadow:0 2px 14px rgba(44,36,22,.05);}
+
+/* ENTRY FORM */
+.gl-form{margin-bottom:24px;}
+.gl-form-date{font-family:'DM Mono',monospace;font-size:11px;color:#8A7A66;letter-spacing:.07em;margin-bottom:20px;}
+.gl-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+.gl-field{display:flex;flex-direction:column;gap:6px;}
+.gl-field.full{grid-column:1/-1;}
+.gl-field label{font-size:12px;font-weight:500;color:#4A3D2E;display:flex;align-items:center;gap:5px;}
+.gl-field label .opt{font-weight:400;color:#A09080;font-size:11px;font-style:italic;}
+.gl-ta{
+  background:#F5EFE6;border:1px solid #D4C9B5;border-radius:7px;
+  padding:10px 12px;font-family:'Lora',serif;font-size:13px;color:#2C2416;
+  resize:none;min-height:72px;outline:none;transition:border-color .15s;
+}
+.gl-ta:focus{border-color:#8A7A66;}
+.gl-ta::placeholder{color:#B5A898;font-style:italic;}
+
+/* TAGS */
+.gl-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px;}
+.gl-tag{
+  padding:2px 9px;border-radius:20px;font-size:10px;font-family:'DM Mono',monospace;
+  cursor:pointer;border:none;transition:all .15s;background:#EDE4D5;color:#6B5B47;
+}
+.gl-tag.on{color:#fff;}
+
+/* MOOD */
+.gl-moodrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.gl-moodbtn{
+  background:none;border:2px solid transparent;border-radius:50%;
+  width:36px;height:36px;font-size:18px;cursor:pointer;
+  transition:all .15s;display:flex;align-items:center;justify-content:center;
+}
+.gl-moodbtn:hover{transform:scale(1.15);}
+.gl-moodbtn.on{border-color:#8A7A66;background:#EDE4D5;}
+.gl-moodlbl{font-size:11px;color:#8A7A66;font-style:italic;}
+
+/* HOBBY PICKER */
+.gl-hgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.gl-hbtn{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:10px 4px;border-radius:10px;border:2px solid #D4C9B5;
+  background:#F5EFE6;cursor:pointer;transition:all .15s;
+  font-family:'Lora',serif;font-size:11px;color:#6B5B47;line-height:1.2;text-align:center;
+}
+.gl-hbtn .hico{font-size:20px;}
+.gl-hbtn:hover{border-color:#8A7A66;background:#EDE4D5;}
+.gl-hbtn.on{border-color:#2C2416;background:#2C2416;color:#F5EFE6;}
+.gl-hnotes{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
+.gl-hnote{
+  width:100%;background:#F5EFE6;border:1px solid #D4C9B5;border-radius:7px;
+  padding:7px 11px;font-family:'Lora',serif;font-size:12px;color:#2C2416;outline:none;
+}
+.gl-hnote:focus{border-color:#8A7A66;}
+.gl-hnote::placeholder{color:#B5A898;font-style:italic;}
+
+/* SAVE BUTTON */
+.gl-saverow{display:flex;justify-content:flex-end;margin-top:18px;}
+.gl-savebtn{
+  background:#2C2416;color:#F5EFE6;border:none;cursor:pointer;
+  padding:10px 24px;border-radius:8px;font-family:'Lora',serif;font-size:13px;
+  font-weight:500;transition:all .15s;
+}
+.gl-savebtn:hover{background:#4A3D2E;transform:translateY(-1px);}
+.gl-savebtn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+
+/* ENTRY CARDS */
+.gl-entries{display:flex;flex-direction:column;gap:16px;}
+.gl-ecard{animation:glFade .3s ease;}
+@keyframes glFade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+.gl-ecard:hover{box-shadow:0 4px 20px rgba(44,36,22,.09);}
+.gl-ecardtop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;}
+.gl-edate{font-family:'DM Mono',monospace;font-size:10px;color:#8A7A66;letter-spacing:.07em;}
+.gl-emood{font-size:18px;}
+.gl-esecs{display:flex;flex-direction:column;gap:12px;}
+.gl-esec{display:flex;gap:10px;}
+.gl-esec-ico{font-size:14px;flex-shrink:0;margin-top:1px;}
+.gl-esec-lbl{font-size:10px;font-family:'DM Mono',monospace;color:#A09080;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px;}
+.gl-esec-txt{font-size:13px;color:#2C2416;line-height:1.6;}
+.gl-etags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.gl-etag{padding:1px 7px;border-radius:20px;font-size:10px;font-family:'DM Mono',monospace;color:#fff;opacity:.85;}
+.gl-ehobbies{display:flex;flex-wrap:wrap;gap:5px;margin-top:11px;}
+.gl-ehbadge{display:flex;align-items:center;gap:3px;background:#EDE4D5;border-radius:20px;padding:2px 9px;font-size:11px;color:#4A3D2E;}
+.gl-ehnote{color:#A09080;margin-left:3px;}
+.gl-efoot{margin-top:14px;padding-top:12px;border-top:1px solid #EDE4D5;display:flex;justify-content:space-between;align-items:center;}
+.gl-erisk{font-size:12px;color:#6B5B47;font-style:italic;}
+.gl-edel{background:none;border:none;cursor:pointer;color:#C9B99A;font-size:11px;font-family:'Lora',serif;transition:color .15s;}
+.gl-edel:hover{color:#AA4A4A;}
+
+/* NOTICE */
+.gl-notice{background:#EDE4D5;border-radius:9px;padding:12px 16px;margin-bottom:18px;font-size:12px;color:#6B5B47;font-style:italic;}
+
+/* HOBBIES PAGE */
+.gl-hpage-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+.gl-yearsel{font-family:'DM Mono',monospace;font-size:12px;color:#6B5B47;background:#EDE4D5;border:1px solid #D4C9B5;border-radius:7px;padding:5px 10px;outline:none;cursor:pointer;}
+.gl-hcards{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+.gl-hcard{background:#FDFAF6;border:1px solid #D4C9B5;border-radius:13px;padding:20px;display:flex;align-items:flex-start;gap:12px;box-shadow:0 2px 10px rgba(44,36,22,.04);transition:box-shadow .2s;}
+.gl-hcard:hover{box-shadow:0 4px 16px rgba(44,36,22,.09);}
+.gl-hcard-ico{font-size:28px;}
+.gl-hcard-body{flex:1;}
+.gl-hcard-name{font-family:'Playfair Display',serif;font-size:14px;color:#2C2416;}
+.gl-hcard-n{font-family:'DM Mono',monospace;font-size:24px;color:#2C2416;line-height:1;margin:2px 0;}
+.gl-hcard-sub{font-size:10px;color:#A09080;font-family:'DM Mono',monospace;}
+.gl-hbar{height:3px;background:#EDE4D5;border-radius:3px;margin-top:8px;}
+.gl-hbar-fill{height:3px;background:#2C2416;border-radius:3px;transition:width .5s ease;}
+
+/* PURITY */
+.gl-pcard{max-width:480px;}
+.gl-pttl{font-family:'Playfair Display',serif;font-size:20px;font-weight:400;margin-bottom:5px;}
+.gl-psub{font-size:12px;color:#8A7A66;font-style:italic;line-height:1.6;margin-bottom:24px;}
+.gl-streak{text-align:center;margin-bottom:8px;}
+.gl-streak-n{font-family:'Playfair Display',serif;font-size:72px;color:#2C2416;line-height:1;}
+.gl-streak-l{font-family:'DM Mono',monospace;font-size:10px;color:#8A7A66;letter-spacing:.1em;text-transform:uppercase;margin-bottom:20px;text-align:center;}
+.gl-pstats{display:flex;gap:12px;margin-bottom:22px;}
+.gl-pstat{flex:1;background:#F5EFE6;border-radius:9px;padding:12px;text-align:center;}
+.gl-pstat-n{font-family:'DM Mono',monospace;font-size:18px;color:#2C2416;}
+.gl-pstat-l{font-size:9px;color:#A09080;font-family:'DM Mono',monospace;margin-top:3px;text-transform:uppercase;letter-spacing:.05em;}
+.gl-pactions{display:flex;gap:9px;}
+.gl-pbtn-fall{flex:1;padding:10px;border:2px solid #D4A8A8;border-radius:9px;background:none;cursor:pointer;font-family:'Lora',serif;font-size:12px;color:#8A5050;transition:all .15s;}
+.gl-pbtn-fall:hover{background:#F8EDED;}
+.gl-pbtn-clean{flex:1;padding:10px;border:2px solid #A8C4A8;border-radius:9px;background:none;cursor:pointer;font-family:'Lora',serif;font-size:12px;color:#4A7A4A;transition:all .15s;}
+.gl-pbtn-clean:hover{background:#EDF5ED;}
+.gl-plog{margin-top:22px;border-top:1px solid #EDE4D5;padding-top:16px;}
+.gl-plog-hdr{font-family:'DM Mono',monospace;font-size:10px;color:#A09080;letter-spacing:.1em;text-transform:uppercase;margin-bottom:9px;}
+.gl-plog-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #F0EBE3;}
+.gl-plog-date{font-family:'DM Mono',monospace;font-size:10px;color:#6B5B47;}
+.gl-badge{font-size:10px;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:20px;}
+.gl-badge-fall{background:#F8EDED;color:#8A5050;}
+.gl-badge-clean{background:#EDF5ED;color:#4A7A4A;}
+
+/* CALENDAR */
+.gl-calwrap{max-width:580px;}
+.gl-calnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+.gl-calarrow{background:none;border:1px solid #D4C9B5;cursor:pointer;width:32px;height:32px;border-radius:7px;font-size:15px;color:#6B5B47;display:flex;align-items:center;justify-content:center;transition:all .15s;}
+.gl-calarrow:hover{background:#EDE4D5;}
+.gl-calmonth{font-family:'Playfair Display',serif;font-size:18px;color:#2C2416;}
+.gl-calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+.gl-caldlbl{text-align:center;font-family:'DM Mono',monospace;font-size:9px;color:#A09080;padding:6px 0;letter-spacing:.05em;}
+.gl-calday{aspect-ratio:1;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#6B5B47;cursor:default;transition:all .15s;}
+.gl-calday.has{background:#2C2416;color:#F5EFE6;cursor:pointer;font-weight:500;}
+.gl-calday.has:hover{background:#4A3D2E;transform:scale(1.05);}
+.gl-calday.tod{outline:2px solid #C9B99A;outline-offset:1px;}
+.gl-calday.empty{opacity:0;pointer-events:none;}
+
+/* SEARCH */
+.gl-sbar{display:flex;align-items:center;gap:10px;background:#FDFAF6;border:1px solid #D4C9B5;border-radius:9px;padding:10px 14px;margin-bottom:20px;}
+.gl-sbar input{flex:1;background:none;border:none;outline:none;font-family:'Lora',serif;font-size:13px;color:#2C2416;}
+.gl-sbar input::placeholder{color:#B5A898;font-style:italic;}
+
+/* SUMMARY */
+.gl-sum-sec{margin-bottom:28px;}
+.gl-sum-sec h3{font-family:'Playfair Display',serif;font-size:17px;font-weight:400;color:#2C2416;margin-bottom:13px;padding-bottom:7px;border-top:none;border-bottom:1px solid #D4C9B5;}
+.gl-sgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+.gl-scard{background:#FDFAF6;border:1px solid #D4C9B5;border-radius:11px;padding:16px;text-align:center;}
+.gl-scard-n{font-family:'Playfair Display',serif;font-size:32px;color:#2C2416;line-height:1;}
+.gl-scard-l{font-family:'DM Mono',monospace;font-size:9px;color:#A09080;letter-spacing:.07em;margin-top:4px;text-transform:uppercase;}
+.gl-tfreq{display:flex;flex-wrap:wrap;gap:8px;}
+.gl-tfi{display:flex;align-items:center;gap:6px;background:#FDFAF6;border:1px solid #D4C9B5;border-radius:7px;padding:8px 12px;}
+.gl-tfc{font-family:'DM Mono',monospace;font-size:10px;color:#8A7A66;background:#EDE4D5;padding:1px 5px;border-radius:4px;}
+
+/* OVERLAY / CONFIRM */
+.gl-overlay{position:fixed;inset:0;background:rgba(44,36,22,.35);display:flex;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(2px);}
+.gl-cbox{background:#FDFAF6;border-radius:13px;padding:28px;max-width:320px;width:90%;box-shadow:0 20px 60px rgba(44,36,22,.2);animation:glFade .2s ease;}
+.gl-cbox h4{font-family:'Playfair Display',serif;font-size:17px;font-weight:400;margin-bottom:7px;}
+.gl-cbox p{font-size:12px;color:#6B5B47;line-height:1.6;margin-bottom:18px;font-style:italic;}
+.gl-cbtns{display:flex;gap:9px;}
+.gl-cyes{flex:1;padding:9px;border:none;background:#2C2416;color:#F5EFE6;border-radius:7px;cursor:pointer;font-family:'Lora',serif;font-size:12px;}
+.gl-cno{flex:1;padding:9px;border:1px solid #D4C9B5;background:none;color:#6B5B47;border-radius:7px;cursor:pointer;font-family:'Lora',serif;font-size:12px;}
+
+/* MODAL */
+.gl-modal-bg{position:fixed;inset:0;background:rgba(44,36,22,.4);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(2px);}
+.gl-modal{background:#FDFAF6;border-radius:14px;padding:28px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(44,36,22,.2);animation:glFade .2s ease;}
+.gl-modal-x{float:right;background:none;border:none;cursor:pointer;font-size:17px;color:#A09080;}
+.gl-modal-x:hover{color:#2C2416;}
+
+.gl-empty{text-align:center;padding:50px 20px;color:#A09080;}
+.gl-empty .ei{font-size:40px;margin-bottom:12px;}
+.gl-empty p{font-style:italic;font-size:14px;}
+`;
+
+// ─── SMALL COMPONENTS ────────────────────────────────────────────────────────
+
+function TagPicker({ sel, onChange }) {
+  return (
+    <div className="gl-tags">
+      {CATEGORIES.map(t => {
+        const on = sel.includes(t);
+        return (
+          <button key={t} className={"gl-tag"+(on?" on":"")}
+            style={on?{backgroundColor:CAT_COLOR[t]}:{}}
+            onClick={() => onChange(on ? sel.filter(x=>x!==t) : [...sel,t])}>
+            {t}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function HobbyPicker({ checked, notes, onToggle, onNote }) {
+  return (
+    <div>
+      <div className="gl-hgrid">
+        {HOBBIES.map(h => (
+          <button key={h.id} className={"gl-hbtn"+(checked.includes(h.id)?" on":"")} onClick={() => onToggle(h.id)}>
+            <span className="hico">{h.icon}</span>{h.label}
+          </button>
+        ))}
+      </div>
+      {checked.length > 0 && (
+        <div className="gl-hnotes">
+          {checked.map(id => {
+            const h = HOBBIES.find(x=>x.id===id);
+            return (
+              <input key={id} className="gl-hnote"
+                placeholder={`${h.label} notes... (optional)`}
+                value={notes[id]||""}
+                onChange={e => onNote(id, e.target.value)} />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EntryCard({ entry, onDelete }) {
+  const secs = [
+    {key:"learned",  icon:"🧠", label:"Learned"},
+    {key:"practiced",icon:"🎯", label:"Practiced"},
+    {key:"created",  icon:"🛠️", label:"Created"},
+  ];
+  const doneH = (entry.hobbies||[]).map(id=>HOBBIES.find(h=>h.id===id)).filter(Boolean);
+  return (
+    <div className="gl-card gl-ecard">
+      <div className="gl-ecardtop">
+        <div className="gl-edate">{fmtDate(entry.date).toUpperCase()}</div>
+        <div className="gl-emood">{MOOD_OPTIONS[entry.mood]||""}</div>
+      </div>
+      <div className="gl-esecs">
+        {secs.map(s => entry[s.key] && (
+          <div key={s.key} className="gl-esec">
+            <div className="gl-esec-ico">{s.icon}</div>
+            <div>
+              <div className="gl-esec-lbl">{s.label}</div>
+              <div className="gl-esec-txt">{entry[s.key]}</div>
+              {(entry[s.key+"Tags"]||[]).length > 0 && (
+                <div className="gl-etags">
+                  {entry[s.key+"Tags"].map(t=><span key={t} className="gl-etag" style={{backgroundColor:CAT_COLOR[t]}}>{t}</span>)}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {doneH.length > 0 && (
+        <div style={{marginTop:12}}>
+          <div className="gl-esec-lbl" style={{marginBottom:6}}>Hobbies</div>
+          <div className="gl-ehobbies">
+            {doneH.map(h=>(
+              <div key={h.id} className="gl-ehbadge">
+                {h.icon} {h.label}
+                {entry.hobbyNotes?.[h.id] && <span className="gl-ehnote">· {entry.hobbyNotes[h.id]}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="gl-efoot">
+        <div className="gl-erisk">{entry.risk ? "⚡ "+entry.risk : ""}</div>
+        <button className="gl-edel" onClick={()=>onDelete(entry.id)}>delete</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── VIEWS ───────────────────────────────────────────────────────────────────
+
+function JournalView({ entries, onDelete, onAddEntry }) {
+  const BLANK = {learned:"",learnedTags:[],practiced:"",practicedTags:[],created:"",createdTags:[],risk:"",mood:2,hobbies:[],hobbyNotes:{}};
+  const [f, setF] = useState(BLANK);
+  const s = (k,v) => setF(p=>({...p,[k]:v}));
+  const todayDone = entries.some(e=>e.date===todayStr());
+  const canSave = f.learned.trim()||f.practiced.trim()||f.created.trim()||f.hobbies.length>0;
+
+  const sorted = [...entries].sort((a,b)=>b.date.localeCompare(a.date));
+
+  return (
+    <div>
+      {!todayDone && (
+        <div className="gl-card gl-form">
+          <div className="gl-form-date">{fmtDate(todayStr()).toUpperCase()}</div>
+          <div className="gl-grid">
+            <div className="gl-field">
+              <label>🧠 What did you learn?</label>
+              <textarea className="gl-ta" placeholder="Something new you discovered..." value={f.learned} onChange={e=>s("learned",e.target.value)}/>
+              <TagPicker sel={f.learnedTags} onChange={v=>s("learnedTags",v)}/>
+            </div>
+            <div className="gl-field">
+              <label>🎯 What did you practice?</label>
+              <textarea className="gl-ta" placeholder="A skill you worked on..." value={f.practiced} onChange={e=>s("practiced",e.target.value)}/>
+              <TagPicker sel={f.practicedTags} onChange={v=>s("practicedTags",v)}/>
+            </div>
+            <div className="gl-field">
+              <label>🛠️ What did you create?</label>
+              <textarea className="gl-ta" placeholder="Something you made or built..." value={f.created} onChange={e=>s("created",e.target.value)}/>
+              <TagPicker sel={f.createdTags} onChange={v=>s("createdTags",v)}/>
+            </div>
+            <div className="gl-field">
+              <label>⚡ Risk taken <span className="opt">optional</span></label>
+              <textarea className="gl-ta" placeholder="Something outside your comfort zone..." value={f.risk} onChange={e=>s("risk",e.target.value)}/>
+            </div>
+            <div className="gl-field full">
+              <label>🏅 Hobbies done today <span className="opt">tap to check off</span></label>
+              <HobbyPicker checked={f.hobbies} notes={f.hobbyNotes}
+                onToggle={id=>s("hobbies",f.hobbies.includes(id)?f.hobbies.filter(x=>x!==id):[...f.hobbies,id])}
+                onNote={(id,v)=>s("hobbyNotes",{...f.hobbyNotes,[id]:v})}/>
+            </div>
+            <div className="gl-field full">
+              <label>Energy today?</label>
+              <div className="gl-moodrow">
+                {MOOD_OPTIONS.map((m,i)=>(
+                  <button key={i} className={"gl-moodbtn"+(f.mood===i?" on":"")} onClick={()=>s("mood",i)} title={MOOD_LABELS[i]}>{m}</button>
+                ))}
+                <span className="gl-moodlbl">{MOOD_LABELS[f.mood]}</span>
+              </div>
+            </div>
+          </div>
+          <div className="gl-saverow">
+            <button className="gl-savebtn" disabled={!canSave}
+              onClick={()=>{ onAddEntry({...f, date:todayStr(), id:Date.now().toString()}); setF(BLANK); }}>
+              Save today's entry →
+            </button>
+          </div>
+        </div>
+      )}
+      {todayDone && <div className="gl-notice">✓ Already logged today. Come back tomorrow, or scroll down to review past entries.</div>}
+      <div className="gl-entries">
+        {sorted.length === 0
+          ? <div className="gl-empty"><div className="ei">📖</div><p>No entries yet. Write your first one above.</p></div>
+          : sorted.map(e=><EntryCard key={e.id} entry={e} onDelete={onDelete}/>)
+        }
+      </div>
+    </div>
+  );
+}
+
+function HobbiesView({ entries }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const allYears = [...new Set([String(now.getFullYear()), ...entries.map(e=>e.date.slice(0,4))])].sort().reverse();
+  const ye = entries.filter(e=>e.date.startsWith(String(year)));
+  const counts = Object.fromEntries(HOBBIES.map(h=>[h.id, ye.filter(e=>(e.hobbies||[]).includes(h.id)).length]));
+  const maxC = Math.max(1, ...Object.values(counts));
+  return (
+    <div>
+      <div className="gl-hpage-hdr">
+        <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"#8A7A66"}}>{ye.length} logged days</span>
+        <select className="gl-yearsel" value={year} onChange={e=>setYear(Number(e.target.value))}>
+          {allYears.map(y=><option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+      <div className="gl-hcards">
+        {HOBBIES.map(h=>(
+          <div key={h.id} className="gl-hcard">
+            <div className="gl-hcard-ico">{h.icon}</div>
+            <div className="gl-hcard-body">
+              <div className="gl-hcard-name">{h.label}</div>
+              <div className="gl-hcard-n">{counts[h.id]}</div>
+              <div className="gl-hcard-sub">times in {year}</div>
+              <div className="gl-hbar"><div className="gl-hbar-fill" style={{width:`${(counts[h.id]/maxC)*100}%`}}/></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PurityView({ data, onUpdate }) {
+  const [confirm, setConfirm] = useState(null);
+  const streak = data.streak||0, total = data.total||0, victories = data.victories||0;
+  const log = data.log||[];
+
+  function doFall() {
+    const d = todayStr();
+    onUpdate({streak:0, total:total+1, victories, log:[{date:d,type:"fall"},...log].slice(0,30), lastReset:d});
+    setConfirm(null);
+  }
+  function doClean() {
+    onUpdate({streak:streak+1, total, victories:victories+1, log:[{date:todayStr(),type:"clean"},...log].slice(0,30), lastReset:data.lastReset||null});
+    setConfirm(null);
+  }
+  return (
+    <div>
+      <div className="gl-card gl-pcard">
+        <div className="gl-pttl">Purity Tracker</div>
+        <div className="gl-psub">A private, honest space for accountability. No judgment — just you, tracking your walk.</div>
+        <div className="gl-streak"><div className="gl-streak-n">{streak}</div></div>
+        <div className="gl-streak-l">day{streak!==1?"s":""} clean</div>
+        <div className="gl-pstats">
+          <div className="gl-pstat"><div className="gl-pstat-n">{total}</div><div className="gl-pstat-l">Total falls</div></div>
+          <div className="gl-pstat"><div className="gl-pstat-n">{victories}</div><div className="gl-pstat-l">Clean days</div></div>
+          <div className="gl-pstat"><div className="gl-pstat-n">{data.lastReset?data.lastReset.slice(5):"—"}</div><div className="gl-pstat-l">Last reset</div></div>
+        </div>
+        <div className="gl-pactions">
+          <button className="gl-pbtn-fall" onClick={()=>setConfirm("fall")}>I fell today</button>
+          <button className="gl-pbtn-clean" onClick={()=>setConfirm("clean")}>✓ Stayed clean</button>
+        </div>
+        {log.length > 0 && (
+          <div className="gl-plog">
+            <div className="gl-plog-hdr">Recent log</div>
+            {log.slice(0,10).map((item,i)=>(
+              <div key={i} className="gl-plog-row">
+                <div className="gl-plog-date">{fmtDate(item.date)}</div>
+                <span className={"gl-badge "+(item.type==="fall"?"gl-badge-fall":"gl-badge-clean")}>{item.type==="fall"?"fell":"clean"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {confirm && (
+        <div className="gl-overlay" onClick={()=>setConfirm(null)}>
+          <div className="gl-cbox" onClick={e=>e.stopPropagation()}>
+            {confirm==="fall"
+              ? <><h4>Log a fall</h4><p>Acknowledging this takes courage. Your streak resets to 0. Every morning is a fresh start.</p><div className="gl-cbtns"><button className="gl-cyes" onClick={doFall}>Yes, log it</button><button className="gl-cno" onClick={()=>setConfirm(null)}>Cancel</button></div></>
+              : <><h4>Log a clean day</h4><p>Well done. Another day added to your streak. Keep walking forward.</p><div className="gl-cbtns"><button className="gl-cyes" onClick={doClean}>Yes, log it</button><button className="gl-cno" onClick={()=>setConfirm(null)}>Cancel</button></div></>
+            }
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarView({ entries }) {
+  const [vd, setVd] = useState(new Date());
+  const [sel, setSel] = useState(null);
+  const map = Object.fromEntries(entries.map(e=>[e.date,e]));
+  const yr=vd.getFullYear(), mo=vd.getMonth();
+  const fd=new Date(yr,mo,1).getDay(), dim=new Date(yr,mo+1,0).getDate();
+  const tod=todayStr();
+  const days=[...Array(fd).fill(null),...Array.from({length:dim},(_,i)=>i+1)];
+  const ds=d=>`${yr}-${String(mo+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  return (
+    <div className="gl-calwrap">
+      <div className="gl-calnav">
+        <button className="gl-calarrow" onClick={()=>setVd(new Date(yr,mo-1,1))}>‹</button>
+        <div className="gl-calmonth">{vd.toLocaleDateString("en-US",{month:"long",year:"numeric"})}</div>
+        <button className="gl-calarrow" onClick={()=>setVd(new Date(yr,mo+1,1))}>›</button>
+      </div>
+      <div className="gl-calgrid">
+        {["SUN","MON","TUE","WED","THU","FRI","SAT"].map(d=><div key={d} className="gl-caldlbl">{d}</div>)}
+        {days.map((d,i)=>{
+          if(!d) return <div key={"e"+i} className="gl-calday empty"/>;
+          const s=ds(d), has=!!map[s], isT=s===tod;
+          return <div key={s} className={"gl-calday"+(has?" has":"")+(isT?" tod":"")} onClick={()=>has&&setSel(map[s])}>{d}</div>;
+        })}
+      </div>
+      {sel && (
+        <div className="gl-modal-bg" onClick={()=>setSel(null)}>
+          <div className="gl-modal" onClick={e=>e.stopPropagation()}>
+            <button className="gl-modal-x" onClick={()=>setSel(null)}>✕</button>
+            <EntryCard entry={sel} onDelete={()=>setSel(null)}/>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchView({ entries, onDelete }) {
+  const [q, setQ] = useState("");
+  const fl = entries.filter(e=>{
+    if(!q) return true;
+    const ql=q.toLowerCase();
+    return [e.learned,e.practiced,e.created,e.risk].some(f=>f?.toLowerCase().includes(ql))
+      || [...(e.learnedTags||[]),...(e.practicedTags||[]),...(e.createdTags||[])].some(t=>t.toLowerCase().includes(ql))
+      || (e.hobbies||[]).some(id=>HOBBIES.find(h=>h.id===id)?.label.toLowerCase().includes(ql));
+  }).sort((a,b)=>b.date.localeCompare(a.date));
+  return (
+    <div>
+      <div className="gl-sbar">
+        <span style={{color:"#A09080",fontSize:14}}>🔍</span>
+        <input placeholder="Search entries, hobbies, tags..." value={q} onChange={e=>setQ(e.target.value)} autoFocus/>
+        {q && <button style={{background:"none",border:"none",cursor:"pointer",color:"#A09080",fontSize:13}} onClick={()=>setQ("")}>✕</button>}
+      </div>
+      {fl.length===0
+        ? <div className="gl-empty"><div className="ei">🔍</div><p>{q?"No entries match.":"No entries yet."}</p></div>
+        : <div className="gl-entries">{fl.map(e=><EntryCard key={e.id} entry={e} onDelete={onDelete}/>)}</div>}
+    </div>
+  );
+}
+
+function SummaryView({ entries }) {
+  const now = new Date();
+  const thisMonth = entries.filter(e=>e.date.startsWith(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`));
+  const allTags = entries.flatMap(e=>[...(e.learnedTags||[]),...(e.practicedTags||[]),...(e.createdTags||[])]);
+  const tc = {}; allTags.forEach(t=>{tc[t]=(tc[t]||0)+1;});
+  const sortedTags = Object.entries(tc).sort((a,b)=>b[1]-a[1]);
+  const mAvg = entries.length>0 ? entries.reduce((s,e)=>s+(e.mood||0),0)/entries.length : null;
+  return (
+    <div>
+      <div className="gl-sum-sec">
+        <h3>Overview</h3>
+        <div className="gl-sgrid">
+          <div className="gl-scard"><div className="gl-scard-n">{entries.length}</div><div className="gl-scard-l">Total entries</div></div>
+          <div className="gl-scard"><div className="gl-scard-n">{thisMonth.length}</div><div className="gl-scard-l">This month</div></div>
+          <div className="gl-scard"><div className="gl-scard-n">{entries.filter(e=>e.risk?.trim()).length}</div><div className="gl-scard-l">Risks taken</div></div>
+          <div className="gl-scard"><div className="gl-scard-n">{mAvg!==null?MOOD_OPTIONS[Math.round(mAvg)]:"—"}</div><div className="gl-scard-l">Avg energy</div></div>
+        </div>
+      </div>
+      {sortedTags.length>0 && (
+        <div className="gl-sum-sec">
+          <h3>Top categories</h3>
+          <div className="gl-tfreq">
+            {sortedTags.map(([t,c])=>(
+              <div key={t} className="gl-tfi">
+                <span style={{color:CAT_COLOR[t],fontSize:14}}>●</span>
+                <span style={{fontSize:12,color:"#2C2416"}}>{t}</span>
+                <span className="gl-tfc">{c}×</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {entries.length===0 && <div className="gl-empty"><div className="ei">📊</div><p>Start writing entries to see your summary.</p></div>}
+    </div>
+  );
+}
+
+// ─── ROOT ─────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [entries, setEntries] = useState([]);
+  const [purity, setPurity] = useState({streak:0,total:0,log:[],lastReset:null,victories:0});
+  const [view, setView] = useState("journal");
+  const [ready, setReady] = useState(false);
+
+  useEffect(()=>{
+    (async()=>{
+      const e = await storageGet(STORAGE_KEY);
+      if(Array.isArray(e)) setEntries(e);
+      const p = await storageGet(PURITY_KEY);
+      if(p && typeof p==="object") setPurity(p);
+      setReady(true);
+    })();
+  },[]);
+
+  async function saveEntries(e){ setEntries(e); await storageSet(STORAGE_KEY, e); }
+  async function savePurity(p){ setPurity(p); await storageSet(PURITY_KEY, p); }
+
+  if(!ready) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#F5EFE6",fontFamily:"'Lora',serif",color:"#8A7A66",fontSize:14,fontStyle:"italic"}}>
+      Loading your journal...
+    </div>
+  );
+
+  const nav = [
+    {k:"journal", i:"📖", l:"Journal"},
+    {k:"hobbies", i:"🏅", l:"Hobbies"},
+    {k:"purity",  i:"🕊️", l:"Purity"},
+    {k:"calendar",i:"📅", l:"Calendar"},
+    {k:"search",  i:"🔍", l:"Search"},
+    {k:"summary", i:"📊", l:"Summary"},
+  ];
+  const hdrs = {
+    journal:  ["Daily Log",    "Your growth, one day at a time."],
+    hobbies:  ["Hobbies",      "How often are you doing what you love?"],
+    purity:   ["Purity",       "Private. Honest. Just for you."],
+    calendar: ["Calendar",     "See the shape of your consistency."],
+    search:   ["Search",       "Find anything you've written."],
+    summary:  ["Summary",      "A reflection on your journey."],
+  };
+
+  return (
+    <>
+      <style>{FONTS}{CSS}</style>
+      <div className="gl-app">
+        <div className="gl-sidebar">
+          <div className="gl-logo">
+            <h1>Growth<br/>Log</h1>
+            <p>LEARN · PRACTICE · CREATE</p>
+          </div>
+          <nav className="gl-nav">
+            {nav.map(n=>(
+              <button key={n.k} className={"gl-navbtn"+(view===n.k?" on":"")} onClick={()=>setView(n.k)}>
+                <span className="ni">{n.i}</span>{n.l}
+              </button>
+            ))}
+          </nav>
+          <div className="gl-sidebar-foot">
+            <p>
+              <strong>{entries.length}</strong> total entries<br/>
+              <strong>{purity.streak}</strong> days clean<br/>
+              <strong>{entries.filter(e=>(e.hobbies||[]).length>0).length}</strong> active days
+            </p>
+          </div>
+        </div>
+        <main className="gl-main">
+          <div className="gl-phdr">
+            <h2>{hdrs[view][0]}</h2>
+            <p>{hdrs[view][1]}</p>
+          </div>
+          {view==="journal"  && <JournalView  entries={entries} onDelete={id=>saveEntries(entries.filter(x=>x.id!==id))} onAddEntry={e=>saveEntries([e,...entries])}/>}
+          {view==="hobbies"  && <HobbiesView  entries={entries}/>}
+          {view==="purity"   && <PurityView   data={purity} onUpdate={savePurity}/>}
+          {view==="calendar" && <CalendarView entries={entries}/>}
+          {view==="search"   && <SearchView   entries={entries} onDelete={id=>saveEntries(entries.filter(x=>x.id!==id))}/>}
+          {view==="summary"  && <SummaryView  entries={entries}/>}
+        </main>
+      </div>
+    </>
+  );
+}
+
+    // Mount the app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>
